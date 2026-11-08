@@ -1,0 +1,10 @@
+*.pdf
+*.zip
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+Thumbs.db
+.DS_Store
