@@ -1,6 +1,6 @@
 "use strict";
 
-const { PDFDocument, degrees } = PDFLib;
+const { PDFDocument, PDFName, degrees } = PDFLib;
 const $ = (id) => document.getElementById(id);
 const sources = [];
 let pages = [];
@@ -87,7 +87,7 @@ async function drawThumbnail(target) {
   try {
     const preview = await source.preview.promise;
     const page = await preview.getPage(index + 1);
-    await renderPreviewPage(page, target, 380, 480);
+    await renderPreviewPage(page, target, 560, 680);
   } catch (error) {
     target.textContent = "無法顯示縮圖";
     if (target.isConnected) console.warn(error);
@@ -122,8 +122,19 @@ function normalizeRotation(angle) {
 
 function rotatePage(entry, amount) {
   entry.rotation = normalizeRotation((entry.rotation ?? 0) + amount);
+  updatePageTransform(entry);
+}
+
+function mirrorPage(entry, vertical) {
+  entry.rotation = normalizeRotation((vertical ? 180 : 0) - (entry.rotation ?? 0));
+  entry.mirrored = !entry.mirrored;
+  updatePageTransform(entry);
+}
+
+function updatePageTransform(entry) {
   const thumbnail = entry.card.querySelector(".thumbnail");
   thumbnail.style.setProperty("--page-rotation", `${entry.rotation}deg`);
+  thumbnail.style.setProperty("--page-mirror", entry.mirrored ? "-1" : "1");
   thumbnail.classList.toggle("sideways", entry.rotation % 180 !== 0);
 }
 
@@ -200,7 +211,13 @@ function createPageCard(entry) {
     button("↶ 左轉", `將 ${title} 向左旋轉 90 度`, () => rotatePage(entry, -90)),
     button("↷ 右轉", `將 ${title} 向右旋轉 90 度`, () => rotatePage(entry, 90)),
   );
-  card.append(pick, thumbnail, caption, actions, rotation);
+  const mirror = document.createElement("div");
+  mirror.className = "page-actions page-rotation-actions";
+  mirror.append(
+    button("↔ 水平鏡像", `水平鏡像翻轉 ${title}`, () => { mirrorPage(entry, false); update(); }),
+    button("↕ 垂直鏡像", `垂直鏡像翻轉 ${title}`, () => { mirrorPage(entry, true); update(); }),
+  );
+  card.append(pick, thumbnail, caption, actions, rotation, mirror);
   thumbnails.observe(thumbnail);
   return card;
 }
@@ -419,7 +436,7 @@ async function importFiles(files) {
 
 function planOutput() {
   const mode = $("mode").value;
-  const all = pages.filter((entry) => entry.selected).map(({ source, index, rotation = 0 }) => ({ source, index, rotation }));
+  const all = pages.filter((entry) => entry.selected).map(({ source, index, rotation = 0, mirrored = false }) => ({ source, index, rotation, mirrored }));
   if (!all.length) throw new Error("請至少勾選一頁。");
   let groups = [all];
   if (mode === "source") {
@@ -472,6 +489,9 @@ function update() {
   $("select-none").disabled = checked === 0;
   $("rotate-selected-left").disabled = checked === 0;
   $("rotate-selected-right").disabled = checked === 0;
+  $("mirror-selected-horizontal").disabled = checked === 0;
+  $("mirror-selected-vertical").disabled = checked === 0;
+  $("mirror-note").hidden = true;
   $("chunk-settings").hidden = $("mode").value !== "chunk";
   $("custom-settings").hidden = $("mode").value !== "custom";
   const reformat = $("reformat").checked;
@@ -488,6 +508,7 @@ function update() {
   if (!sources.length) return message($("summary"), "加入 PDF 後即可設定輸出。");
   try {
     const { groups, nup } = planOutput();
+    $("mirror-note").hidden = !groups.some((group) => group.some((entry) => entry.mirrored));
     const selected = groups.reduce((count, group) => count + group.length, 0);
     const sheets = groups.reduce((count, group) => count + Math.ceil(group.length / nup), 0);
     message($("summary"), `取用 ${selected} 頁 · 輸出 ${groups.length} 份 PDF · 共 ${sheets} 張 · ${reformat ? "自訂列印版面" : "原樣輸出"}`);
@@ -506,25 +527,43 @@ function update() {
 
 async function copyOriginal(output, group) {
   const positions = new Map();
-  group.forEach(({ source, index, rotation = 0 }, position) => {
+  group.forEach(({ source, index, rotation = 0, mirrored = false }, position) => {
     if (!positions.has(source)) positions.set(source, new Map());
-    const rotations = positions.get(source);
-    if (!rotations.has(rotation)) rotations.set(rotation, []);
-    rotations.get(rotation).push({ index, position });
+    const transforms = positions.get(source);
+    const key = rotation + (mirrored ? 360 : 0);
+    if (!transforms.has(key)) transforms.set(key, { rotation, mirrored, entries: [] });
+    transforms.get(key).entries.push({ index, position });
   });
   const pages = new Array(group.length);
-  for (const [source, rotations] of positions) {
-    // Copies of the same source page with different rotations need separate page dictionaries.
-    for (const [rotation, entries] of rotations) {
+  for (const [source, transforms] of positions) {
+    // A repeated source page can have a different transform on each copy.
+    for (const { rotation, mirrored, entries } of transforms.values()) {
       const copies = await output.copyPages(source.doc, entries.map(({ index }) => index));
       entries.forEach(({ index, position }, copyIndex) => {
         const page = copies[copyIndex];
-        if (rotation) page.setRotation(degrees(normalizeRotation(source.doc.getPage(index).getRotation().angle + rotation)));
+        const original = source.doc.getPage(index);
+        if (mirrored) mirrorPageContents(page, original);
+        if (rotation) page.setRotation(degrees(normalizeRotation(original.getRotation().angle + rotation)));
         pages[position] = page;
       });
     }
   }
   for (const page of pages) output.addPage(page);
+}
+
+function mirrorPageContents(page, original) {
+  page.node.delete(PDFName.of("Annots"));
+  if (!page.node.Contents()) return;
+  const horizontal = original.getRotation().angle % 180 === 0;
+  const crop = original.getCropBox();
+  const media = original.getMediaBox();
+  const xSum = Math.max(crop.x, media.x) + Math.min(crop.x + crop.width, media.x + media.width);
+  const ySum = Math.max(crop.y, media.y) + Math.min(crop.y + crop.height, media.y + media.height);
+  page.node.normalize();
+  const contents = PDFName.of("Contents");
+  page.node.set(contents, page.node.Contents().clone());
+  page.scaleContent(horizontal ? -1 : 1, horizontal ? 1 : -1);
+  page.translateContent(horizontal ? xSum : 0, horizontal ? 0 : ySum);
 }
 
 async function layOutPages(output, group, layout) {
@@ -535,7 +574,7 @@ async function layOutPages(output, group, layout) {
   const cellWidth = (width - 2 * margin - (cols - 1) * gap) / cols;
   const cellHeight = (height - 2 * margin - (rows - 1) * gap) / rows;
   let sheet;
-  for (const [position, { source, index, rotation: adjustment = 0 }] of group.entries()) {
+  for (const [position, { source, index, rotation: adjustment = 0, mirrored }] of group.entries()) {
     const slot = position % nup;
     if (slot === 0) sheet = output.addPage([width, height]);
     const page = source.doc.getPage(index);
@@ -561,7 +600,16 @@ async function layOutPages(output, group, layout) {
     let y = height - margin - row * (cellHeight + gap) - (cellHeight + visualHeight * scale) / 2;
     if (rotation === 180 || rotation === 270) x += visualWidth * scale;
     if (rotation === 90 || rotation === 180) y += visualHeight * scale;
-    sheet.drawPage(embedded, { x, y, xScale: scale, yScale: scale, rotate: degrees(-rotation) });
+    const reflectX = mirrored && page.getRotation().angle % 180 === 0;
+    const reflectY = mirrored && !reflectX;
+    const dx = reflectX ? embedded.width * scale : 0;
+    const dy = reflectY ? embedded.height * scale : 0;
+    const angle = -rotation * Math.PI / 180;
+    x += dx * Math.cos(angle) - dy * Math.sin(angle);
+    y += dx * Math.sin(angle) + dy * Math.cos(angle);
+    sheet.drawPage(embedded, {
+      x, y, xScale: reflectX ? -scale : scale, yScale: reflectY ? -scale : scale, rotate: degrees(-rotation),
+    });
   }
 }
 
@@ -579,7 +627,7 @@ function validOutputPassword(password) {
 async function createExportPdf(group, plan, password) {
   const { source } = group[0];
   const wholeFile = !plan.width && group.length === source.total &&
-    group.every((entry, index) => entry.source === source && entry.index === index && !entry.rotation);
+    group.every((entry, index) => entry.source === source && entry.index === index && !entry.rotation && !entry.mirrored);
   const bytes = wholeFile && (password || source.unlocked)
     ? new Uint8Array(await source.original.arrayBuffer())
     : await createPdf(group, plan);
@@ -746,6 +794,12 @@ for (const [id, selected] of [["select-all", true], ["select-none", false]]) {
 for (const [id, amount] of [["rotate-selected-left", -90], ["rotate-selected-right", 90]]) {
   $(id).addEventListener("click", () => {
     for (const entry of pages) if (entry.selected) rotatePage(entry, amount);
+  });
+}
+for (const [id, vertical] of [["mirror-selected-horizontal", false], ["mirror-selected-vertical", true]]) {
+  $(id).addEventListener("click", () => {
+    for (const entry of pages) if (entry.selected) mirrorPage(entry, vertical);
+    update();
   });
 }
 for (const type of ["dragenter", "dragover"]) {

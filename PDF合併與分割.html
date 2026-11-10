@@ -46,9 +46,11 @@
         <button id="select-all" type="button">全選</button>
         <button id="select-none" type="button">全取消</button>
       </div>
-      <div class="rotate-toolbar" role="group" aria-label="批次旋轉">
+      <div class="rotate-toolbar" role="group" aria-label="批次旋轉與鏡像">
         <button id="rotate-selected-left" type="button">↶ 勾選頁左轉 90°</button>
         <button id="rotate-selected-right" type="button">↷ 勾選頁右轉 90°</button>
+        <button id="mirror-selected-horizontal" type="button">↔ 勾選頁水平鏡像</button>
+        <button id="mirror-selected-vertical" type="button">↕ 勾選頁垂直鏡像</button>
       </div>
       <ol id="pages" class="pages" aria-label="頁面預覽與排序"></ol>
       <button id="add-files" class="add-files" type="button">＋ 增加檔案</button>
@@ -124,6 +126,7 @@
         </label>
       </fieldset>
       <p id="summary" class="summary" role="status"></p>
+      <p id="mirror-note" class="hint" hidden>鏡像頁會保留頁面內容，並移除該頁的連結、註解和互動表單欄位。</p>
       <button id="preview-output" class="preview-output" type="button" disabled>預覽輸出</button>
       <button id="export" class="primary" type="submit" disabled>下載 PDF</button>
       <button id="save-as" type="button" disabled>另存新檔…</button>
