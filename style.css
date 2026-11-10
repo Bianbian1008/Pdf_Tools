@@ -118,6 +118,7 @@ button:disabled { opacity: .48; cursor: default; }
 #layout-settings .hint { margin-bottom: 0; }
 .page-toolbar { display: flex; align-items: center; gap: 8px; margin-block: 14px; }
 .page-toolbar strong { margin-right: auto; font-size: .9rem; }
+.rotate-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 12px; }
 .pages {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -129,14 +130,16 @@ button:disabled { opacity: .48; cursor: default; }
 .page-card { position: relative; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
 .page-pick { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; cursor: pointer; }
 .page-pick input { accent-color: var(--accent); width: 16px; height: 16px; }
-.thumbnail { display: grid; place-items: center; height: 190px; background: var(--thumbnail); border-radius: 5px; color: var(--muted); font-size: .76rem; cursor: grab; }
+.thumbnail { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; container-type: size; height: 190px; background: var(--thumbnail); border-radius: 5px; color: var(--muted); font-size: .76rem; cursor: grab; }
 .thumbnail:active { cursor: grabbing; }
-.thumbnail img { max-width: calc(100% - 10px); max-height: 180px; box-shadow: 0 1px 4px #0003; background: white; pointer-events: none; }
+.thumbnail img { max-width: calc(100% - 10px); max-height: 180px; box-shadow: 0 1px 4px #0003; background: white; pointer-events: none; transform: rotate(var(--page-rotation, 0deg)); }
+.thumbnail.sideways img { max-width: 180px; max-height: calc(100cqw - 10px); }
 .excluded .thumbnail { opacity: .48; }
 .page-caption { display: grid; gap: 2px; margin: 7px 0; font-size: .78rem; }
 .page-filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
 .page-actions { display: flex; gap: 4px; }
 .page-actions button { flex: 1; padding-block: 3px; }
+.page-rotation-actions { margin-top: 4px; }
 .page-card.drop-before::before, .page-card.drop-after::before {
   content: "";
   position: absolute;

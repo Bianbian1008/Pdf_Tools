@@ -116,6 +116,17 @@ function movePage(entry, destination) {
   entry.checkbox.focus({ preventScroll: true });
 }
 
+function normalizeRotation(angle) {
+  return ((angle % 360) + 360) % 360;
+}
+
+function rotatePage(entry, amount) {
+  entry.rotation = normalizeRotation((entry.rotation ?? 0) + amount);
+  const thumbnail = entry.card.querySelector(".thumbnail");
+  thumbnail.style.setProperty("--page-rotation", `${entry.rotation}deg`);
+  thumbnail.classList.toggle("sideways", entry.rotation % 180 !== 0);
+}
+
 function createPageCard(entry) {
   const { source, index } = entry;
   const title = `${source.name} 第 ${index + 1} 頁`;
@@ -183,7 +194,13 @@ function createPageCard(entry) {
   entry.previous = button("←", `將 ${title} 往前移一位`, () => movePage(entry, pages.indexOf(entry) - 1));
   entry.next = button("→", `將 ${title} 往後移一位`, () => movePage(entry, pages.indexOf(entry) + 1));
   actions.append(entry.previous, entry.next);
-  card.append(pick, thumbnail, caption, actions);
+  const rotation = document.createElement("div");
+  rotation.className = "page-actions page-rotation-actions";
+  rotation.append(
+    button("↶ 左轉", `將 ${title} 向左旋轉 90 度`, () => rotatePage(entry, -90)),
+    button("↷ 右轉", `將 ${title} 向右旋轉 90 度`, () => rotatePage(entry, 90)),
+  );
+  card.append(pick, thumbnail, caption, actions, rotation);
   thumbnails.observe(thumbnail);
   return card;
 }
@@ -402,7 +419,7 @@ async function importFiles(files) {
 
 function planOutput() {
   const mode = $("mode").value;
-  const all = pages.filter((entry) => entry.selected);
+  const all = pages.filter((entry) => entry.selected).map(({ source, index, rotation = 0 }) => ({ source, index, rotation }));
   if (!all.length) throw new Error("請至少勾選一頁。");
   let groups = [all];
   if (mode === "source") {
@@ -453,6 +470,8 @@ function update() {
   $("page-count").textContent = `已勾選 ${checked} / ${pages.length} 頁`;
   $("select-all").disabled = checked === pages.length;
   $("select-none").disabled = checked === 0;
+  $("rotate-selected-left").disabled = checked === 0;
+  $("rotate-selected-right").disabled = checked === 0;
   $("chunk-settings").hidden = $("mode").value !== "chunk";
   $("custom-settings").hidden = $("mode").value !== "custom";
   const reformat = $("reformat").checked;
@@ -487,14 +506,23 @@ function update() {
 
 async function copyOriginal(output, group) {
   const positions = new Map();
-  group.forEach(({ source, index }, position) => {
-    if (!positions.has(source)) positions.set(source, []);
-    positions.get(source).push({ index, position });
+  group.forEach(({ source, index, rotation = 0 }, position) => {
+    if (!positions.has(source)) positions.set(source, new Map());
+    const rotations = positions.get(source);
+    if (!rotations.has(rotation)) rotations.set(rotation, []);
+    rotations.get(rotation).push({ index, position });
   });
   const pages = new Array(group.length);
-  for (const [source, entries] of positions) {
-    const copies = await output.copyPages(source.doc, entries.map(({ index }) => index));
-    entries.forEach(({ position }, index) => { pages[position] = copies[index]; });
+  for (const [source, rotations] of positions) {
+    // Copies of the same source page with different rotations need separate page dictionaries.
+    for (const [rotation, entries] of rotations) {
+      const copies = await output.copyPages(source.doc, entries.map(({ index }) => index));
+      entries.forEach(({ index, position }, copyIndex) => {
+        const page = copies[copyIndex];
+        if (rotation) page.setRotation(degrees(normalizeRotation(source.doc.getPage(index).getRotation().angle + rotation)));
+        pages[position] = page;
+      });
+    }
   }
   for (const page of pages) output.addPage(page);
 }
@@ -507,7 +535,7 @@ async function layOutPages(output, group, layout) {
   const cellWidth = (width - 2 * margin - (cols - 1) * gap) / cols;
   const cellHeight = (height - 2 * margin - (rows - 1) * gap) / rows;
   let sheet;
-  for (const [position, { source, index }] of group.entries()) {
+  for (const [position, { source, index, rotation: adjustment = 0 }] of group.entries()) {
     const slot = position % nup;
     if (slot === 0) sheet = output.addPage([width, height]);
     const page = source.doc.getPage(index);
@@ -521,7 +549,7 @@ async function layOutPages(output, group, layout) {
     if (right <= left || top <= bottom) throw new Error(`${source.name} 的第 ${index + 1} 頁沒有有效的可列印範圍。`);
 
     const embedded = await output.embedPage(page, { left, bottom, right, top });
-    const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+    const rotation = normalizeRotation(page.getRotation().angle + adjustment);
     const sideways = rotation === 90 || rotation === 270;
     const visualWidth = sideways ? embedded.height : embedded.width;
     const visualHeight = sideways ? embedded.width : embedded.height;
@@ -551,7 +579,7 @@ function validOutputPassword(password) {
 async function createExportPdf(group, plan, password) {
   const { source } = group[0];
   const wholeFile = !plan.width && group.length === source.total &&
-    group.every((entry, index) => entry.source === source && entry.index === index);
+    group.every((entry, index) => entry.source === source && entry.index === index && !entry.rotation);
   const bytes = wholeFile && (password || source.unlocked)
     ? new Uint8Array(await source.original.arrayBuffer())
     : await createPdf(group, plan);
@@ -713,6 +741,11 @@ for (const [id, selected] of [["select-all", true], ["select-none", false]]) {
   $(id).addEventListener("click", () => {
     for (const entry of pages) entry.selected = selected;
     renderPages();
+  });
+}
+for (const [id, amount] of [["rotate-selected-left", -90], ["rotate-selected-right", 90]]) {
+  $(id).addEventListener("click", () => {
+    for (const entry of pages) if (entry.selected) rotatePage(entry, amount);
   });
 }
 for (const type of ["dragenter", "dragover"]) {
