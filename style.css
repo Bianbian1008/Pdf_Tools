@@ -75,7 +75,12 @@ fieldset label + label, .pair { margin-top: 8px; }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .pair label + label { margin-top: 0; }
 input, select, button { font: inherit; }
-input[type=text], input[type=number], select { min-width: 0; width: 100%; border: 1px solid var(--control-line); border-radius: 7px; padding: 8px; background: var(--surface); color: var(--text); }
+input[type=text], input[type=number], input[type=password], select { min-width: 0; width: 100%; border: 1px solid var(--control-line); border-radius: 7px; padding: 8px; background: var(--surface); color: var(--text); }
+dialog { width: min(440px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 12px; padding: 20px; background: var(--surface); color: var(--text); }
+dialog::backdrop { background: #0007; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.unlock-confirm { background: var(--primary); color: var(--primary-text); }
+#output-password-settings { margin-top: 8px; }
 input[aria-invalid=true] { border-color: var(--error); }
 button { cursor: pointer; color: var(--accent); background: var(--button); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; }
 button:disabled { opacity: .48; cursor: default; }

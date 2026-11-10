@@ -310,6 +310,46 @@ function renderSources() {
   update();
 }
 
+async function runPdfProtection(bytes, options) {
+  let invalidPassword = false;
+  const qpdf = await Module({
+    noInitialRun: true,
+    wasmBinary: Uint8Array.from(atob(qpdfBinary), (character) => character.charCodeAt(0)),
+    print() {},
+    printErr(line) { invalidPassword ||= /invalid password/i.test(line); },
+  });
+  qpdf.FS.writeFile("/input.pdf", bytes);
+  try {
+    const result = qpdf.callMain([...options, "/input.pdf", "/output.pdf"]);
+    if (invalidPassword) return null;
+    // qpdf exit code 3 means it wrote the file with warnings.
+    if (result !== 0 && result !== 3) throw new Error("PDF 密碼處理失敗。");
+    return qpdf.FS.readFile("/output.pdf");
+  } finally {
+    qpdf.FS.unlink("/input.pdf");
+    try { qpdf.FS.unlink("/output.pdf"); } catch { /* No output on failure. */ }
+  }
+}
+
+async function unlockPdf(bytes, filename) {
+  const dialog = $("unlock-dialog");
+  const input = $("unlock-password");
+  $("unlock-filename").textContent = filename;
+  message($("unlock-status"), "");
+  while (true) {
+    dialog.returnValue = "skip";
+    const closed = new Promise((resolve) => dialog.addEventListener("close", resolve, { once: true }));
+    dialog.showModal();
+    await closed;
+    const password = input.value;
+    input.value = "";
+    if (dialog.returnValue !== "unlock") return null;
+    const unlocked = await runPdfProtection(bytes, [`--password=${password}`, "--decrypt"]);
+    if (unlocked) return unlocked;
+    message($("unlock-status"), "密碼不正確，請再試一次。", true);
+  }
+}
+
 async function importFiles(files) {
   if (!files.length || importing || exporting) return;
   importing = true;
@@ -320,21 +360,34 @@ async function importFiles(files) {
   let added = 0;
   for (const file of files) {
     try {
-      const data = await file.arrayBuffer();
-      const doc = await PDFDocument.load(data, { updateMetadata: false });
+      let data = new Uint8Array(await file.arrayBuffer());
+      let doc = await PDFDocument.load(data, { updateMetadata: false, ignoreEncryption: true });
+      let unlocked = false;
+      if (doc.isEncrypted) {
+        data = await unlockPdf(data, file.name);
+        if (!data) {
+          errors.push(`${file.name}：已跳過加密的 PDF。`);
+          continue;
+        }
+        unlocked = true;
+        doc = await PDFDocument.load(data, { updateMetadata: false });
+      }
       const total = doc.getPageCount();
       if (!total) {
         errors.push(`${file.name}：沒有可用頁面。`);
         continue;
       }
-      const preview = loadPreview(new Uint8Array(data.slice(0)));
+      const preview = loadPreview(data.slice());
       preview.promise.catch(() => {});
-      const source = { name: file.name, doc, total, selection: "", preview, importOrder: nextSourceOrder++ };
+      const source = {
+        name: file.name, doc, total, selection: "", preview, importOrder: nextSourceOrder++,
+        original: unlocked ? new Blob([data]) : file, unlocked,
+      };
       sources.push(source);
       for (let index = 0; index < total; index++) pages.push({ source, index, selected: true });
       added++;
     } catch (error) {
-      const reason = error instanceof PDFLib.EncryptedPDFError ? "PDF 已加密，請先解除保護。" : "無法讀取，請確認檔案是有效的 PDF。";
+      const reason = "無法讀取或解鎖，請確認檔案是有效且受支援的 PDF。";
       errors.push(`${file.name}：${reason}`);
     }
   }
@@ -405,6 +458,9 @@ function update() {
   const reformat = $("reformat").checked;
   $("layout-settings").hidden = !reformat;
   $("layout-settings").disabled = !reformat;
+  const lock = $("lock-output").checked;
+  $("output-password-settings").hidden = !lock;
+  $("output-password").disabled = !lock;
   $("export").textContent = $("mode").value === "merge" ? "下載 PDF" : "下載分割結果";
   $("export").disabled = true;
   $("save-as").disabled = true;
@@ -419,6 +475,11 @@ function update() {
     $("export").disabled = busy;
     $("save-as").disabled = $("export").disabled || !supportsSavePicker;
     $("preview-output").disabled = $("export").disabled;
+    if (lock && !validOutputPassword($("output-password").value)) {
+      $("export").disabled = true;
+      $("save-as").disabled = true;
+      message($("summary"), "請輸入開啟密碼（最多 127 個 UTF-8 位元組）。", true);
+    }
   } catch (error) {
     message($("summary"), error.message, true);
   }
@@ -481,6 +542,26 @@ async function createPdf(group, layout) {
   if (layout.width) await layOutPages(output, group, layout);
   else await copyOriginal(output, group);
   return output.save();
+}
+
+function validOutputPassword(password) {
+  return Boolean(password.trim()) && !password.includes("\0") && new TextEncoder().encode(password).length <= 127;
+}
+
+async function createExportPdf(group, plan, password) {
+  const { source } = group[0];
+  const wholeFile = !plan.width && group.length === source.total &&
+    group.every((entry, index) => entry.source === source && entry.index === index);
+  const bytes = wholeFile && (password || source.unlocked)
+    ? new Uint8Array(await source.original.arrayBuffer())
+    : await createPdf(group, plan);
+  if (!password) return bytes;
+  const owner = Array.from(crypto.getRandomValues(new Uint8Array(24)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const encrypted = await runPdfProtection(bytes, [
+    "--encrypt", `--user-password=${password}`, `--owner-password=${owner}`, "--bits=256", "--",
+  ]);
+  if (!encrypted) throw new Error("無法設定 PDF 開啟密碼。");
+  return encrypted;
 }
 
 async function showOutputPreview(popup, plan) {
@@ -648,6 +729,14 @@ $("drop").addEventListener("drop", (event) => {
 });
 if (!supportsSavePicker) $("save-as").title = "請使用支援另存新檔的 Edge 或 Chrome。";
 $("output").addEventListener("input", update);
+$("lock-output").addEventListener("change", () => {
+  if (!$("lock-output").checked) $("output-password").value = "";
+});
+$("unlock-dialog").querySelector("form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  $("unlock-dialog").close("unlock");
+});
+$("skip-unlock").addEventListener("click", () => $("unlock-dialog").close("skip"));
 $("preview-output").addEventListener("click", () => {
   if ($("preview-output").disabled) return;
   const plan = planOutput();
@@ -669,6 +758,7 @@ $("save-as").addEventListener("click", () => {
 
 async function exportOutput(saveAs) {
   const plan = planOutput();
+  const password = $("lock-output").checked ? $("output-password").value : "";
   const name = $("filename").value.trim() ? baseName($("filename").value) : defaultOutputName();
   const extension = plan.groups.length === 1 ? "pdf" : "zip";
   const type = extension === "pdf" ? "application/pdf" : "application/zip";
@@ -695,7 +785,7 @@ async function exportOutput(saveAs) {
     for (const [index, group] of plan.groups.entries()) {
       message($("export-status"), `正在產生第 ${index + 1} / ${plan.groups.length} 份 PDF…`);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      const bytes = await createPdf(group, plan);
+      const bytes = await createExportPdf(group, plan, password);
       if (plan.groups.length === 1) singlePdf = bytes;
       else {
         const suffix = String(index + 1).padStart(digits, "0");

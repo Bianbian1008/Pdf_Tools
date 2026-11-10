@@ -11,6 +11,8 @@
 <script defer src="vendor/pdfjs.min.js"></script>
 <script defer src="vendor/pdfjs-worker.min.js"></script>
 <script defer src="vendor/pdfjs-assets.js"></script>
+<script defer src="vendor/qpdf.js"></script>
+<script defer src="vendor/qpdf-binary.js"></script>
 <script defer src="app.js"></script>
 </head>
 <body>
@@ -109,6 +111,14 @@
           <p class="hint">重新排版會取用頁面內容，連結、註解和互動表單可能不會出現在成品中。</p>
         </fieldset>
       </fieldset>
+      <fieldset>
+        <legend>密碼保護</legend>
+        <label class="toggle"><input id="lock-output" type="checkbox" autocomplete="off"> 為輸出的 PDF 上鎖</label>
+        <label id="output-password-settings" hidden>開啟密碼
+          <input id="output-password" type="password" autocomplete="new-password" disabled>
+          <span class="hint">所有輸出的 PDF 會使用同一組密碼。預覽可直接查看。</span>
+        </label>
+      </fieldset>
       <p id="summary" class="summary" role="status"></p>
       <button id="preview-output" class="preview-output" type="button" disabled>預覽輸出</button>
       <button id="export" class="primary" type="submit" disabled>下載 PDF</button>
@@ -118,6 +128,21 @@
   </section>
 </main>
 <div id="export-notice" class="export-notice" aria-hidden="true" hidden></div>
+<dialog id="unlock-dialog" aria-labelledby="unlock-title">
+  <form method="dialog">
+    <h2 id="unlock-title">解鎖 PDF</h2>
+    <p id="unlock-filename" class="hint"></p>
+    <label>原始密碼
+      <input id="unlock-password" type="password" autocomplete="off" autofocus>
+    </label>
+    <p id="unlock-status" class="message" role="status"></p>
+    <p class="hint">如果檔案只限制列印或編輯，且開啟時不需密碼，可留空試試。</p>
+    <div class="dialog-actions">
+      <button id="skip-unlock" type="button">跳過</button>
+      <button type="submit" class="unlock-confirm">解鎖並匯入</button>
+    </div>
+  </form>
+</dialog>
 </body>
 </html>
 
